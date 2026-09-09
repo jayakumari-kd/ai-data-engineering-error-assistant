@@ -1,0 +1,8 @@
+streamlit
+anthropic
+httpx2
+Brotli==1.1.0
+black
+blackcellmagic
+pyspark-stubs
+requests_oauthlib
