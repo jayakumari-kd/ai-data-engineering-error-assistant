@@ -2,7 +2,7 @@
 
 ## Error
 
-No final Spark error occurred.
+No final Spark application error occurred.
 
 An executor was deliberately terminated while a shuffle workload was running. Spark detected the executor loss, started a replacement executor, retried the required work, and the job completed successfully.
 
@@ -26,7 +26,7 @@ This experiment demonstrates **Spark's recovery mechanism after executor loss du
 
 ## Reproduction
 
-Created a shuffle workload:
+A shuffle workload was created:
 
 ```python
 from pyspark.sql import functions as F
@@ -42,11 +42,13 @@ slow_df = failure_spark.range(
 slow_result = slow_df.groupBy("key").count()
 ```
 
-Executed the shuffle:
+The shuffle was then executed:
 
 ```python
 print("Starting slow shuffle...")
+
 slow_result.count()
+
 print("Shuffle completed")
 ```
 
@@ -54,33 +56,28 @@ print("Shuffle completed")
 
 ## Executor Identification
 
-The Spark application was:
+The Spark application was monitored to identify the executor processes.
 
-```text
-App ID: app-20260904101139-0000
-```
-
-Initial executors:
-
-```text
-Executor 0 → PID 5242
-Executor 1 → PID 5252
-```
-
-The processes were identified using:
+The executor processes were identified using a command similar to:
 
 ```powershell
-docker exec funny_gould bash -c "ps -ef | grep CoarseGrainedExecutorBackend | grep -v grep"
+docker exec <CONTAINER_NAME> bash -c "ps -ef | grep CoarseGrainedExecutorBackend | grep -v grep"
 ```
+
+The initial environment contained two executor processes.
+
+> Process IDs and container names are intentionally omitted from this public documentation.
 
 ---
 
 ## Failure Simulation
 
-Executor 0 was deliberately terminated:
+One executor process was deliberately terminated to simulate an executor failure.
+
+Example:
 
 ```powershell
-docker exec funny_gould bash -c "kill -9 5242"
+docker exec <CONTAINER_NAME> bash -c "kill -9 <EXECUTOR_PID>"
 ```
 
 This terminated only the executor process.
@@ -93,21 +90,23 @@ The Docker container and Jupyter environment remained running.
 
 Spark detected the executor loss and launched a replacement executor.
 
-Before:
+The execution state changed from:
 
 ```text
-Executor 0 → PID 5242
-Executor 1 → PID 5252
+Executor 0
+Executor 1
 ```
 
-After:
+to:
 
 ```text
-Executor 1 → PID 5252
-Executor 2 → PID 5877
+Executor 1
+Replacement Executor
 ```
 
 The Spark job completed successfully.
+
+No `FetchFailedException` was observed.
 
 ---
 
@@ -115,19 +114,19 @@ The Spark job completed successfully.
 
 ```text
 Shuffle workload
-      ↓
-Executor 0 processing tasks
-      ↓
-Executor 0 terminated
-      ↓
+       ↓
+Executor processing tasks
+       ↓
+Executor terminated
+       ↓
 Spark detects executor loss
-      ↓
-Replacement Executor 2 starts
-      ↓
+       ↓
+Replacement executor starts
+       ↓
 Lost work is retried/recomputed
-      ↓
+       ↓
 Shuffle completes
-      ↓
+       ↓
 Job succeeds
 ```
 
@@ -135,21 +134,25 @@ Job succeeds
 
 ## Why No FetchFailedException Occurred
 
-An executor being lost does not automatically mean the application will fail.
+Executor loss does not automatically mean that the Spark application will fail.
 
-Spark can recover by launching a replacement executor and retrying/recomputing the lost work.
+Depending on the stage and the availability of the required shuffle data, Spark may recover by launching a replacement executor and retrying or recomputing lost work.
 
 Therefore:
 
 ```text
 Executor Loss
-      ↓
-May cause Shuffle Fetch Failure
-      ↓
-But Spark can sometimes recover automatically
+       ↓
+May cause shuffle-related failure
+       ↓
+But Spark may recover automatically
 ```
 
 In this experiment, Spark successfully recovered.
+
+This is an important distinction:
+
+**Executor loss and shuffle fetch failure are related, but they are not the same failure.**
 
 ---
 
@@ -164,26 +167,26 @@ In a production environment, executor loss could be caused by:
 * Node failure
 * Container crash
 * Network problems
-* Disk/resource exhaustion
+* Disk or resource exhaustion
 * Infrastructure failure
 
 ---
 
 ## Investigation
 
-### Check Spark master
+### Check Spark Master
 
 ```python
 print(failure_spark.sparkContext.master)
 ```
 
-Result:
+Expected result:
 
 ```text
 local-cluster[2,1,1024]
 ```
 
-### Confirm shuffle
+### Confirm Shuffle
 
 The physical plan contained:
 
@@ -191,31 +194,53 @@ The physical plan contained:
 Exchange hashpartitioning(...)
 ```
 
-`Exchange` indicates that Spark is performing a shuffle.
+`Exchange` indicates a shuffle boundary in the Spark physical plan.
 
-### Check executor processes
+For example:
 
-```powershell
-docker exec funny_gould bash -c "ps -ef | grep CoarseGrainedExecutorBackend | grep -v grep"
+```python
+slow_result.explain(True)
 ```
 
-The replacement executor confirmed that Spark recovered from the executor loss.
+can be used to inspect the physical plan.
+
+### Check Executor Processes
+
+A process-level check can be used to identify executor processes:
+
+```powershell
+docker exec <CONTAINER_NAME> bash -c "ps -ef | grep CoarseGrainedExecutorBackend | grep -v grep"
+```
+
+The appearance of a replacement executor after the failure confirmed that Spark recovered from the executor loss.
+
+### Check Spark UI
+
+The Spark UI can be used to investigate:
+
+* Failed tasks
+* Retried tasks
+* Stage execution
+* Executor status
+* Shuffle read/write
+* Task duration
+* Executor failures
 
 ---
 
 ## Final Result
 
-**Executor loss was successfully simulated, but Spark recovered automatically.**
+**Executor loss was successfully simulated, and Spark recovered automatically.**
 
 ```text
-Executor 0 lost
-      ↓
-Executor replacement
-      ↓
+Executor lost
+       ↓
+Replacement executor
+       ↓
 Task/work recovery
-      ↓
+       ↓
 Shuffle completed
-      ↓
+       ↓
 Application succeeded
 ```
 
@@ -226,13 +251,29 @@ No `FetchFailedException` was observed.
 ## Lessons Learned
 
 1. Executor loss does not always result in application failure.
-2. Spark can automatically replace lost executors in a cluster environment.
+2. Spark can replace lost executors in a cluster environment.
 3. Lost tasks can be retried and required computation can be regenerated.
-4. A shuffle operation contains intermediate data that downstream stages may need to fetch.
+4. Shuffle operations create intermediate data that downstream stages may need to fetch.
 5. `FetchFailedException` is a more specific failure where Spark cannot successfully retrieve required shuffle data.
 6. Executor loss and shuffle fetch failure should be investigated as related but separate problems.
 7. `Exchange` in the physical plan is a useful indicator of a shuffle boundary.
-8. Spark UI and executor logs are important when investigating real production shuffle problems.
+8. Spark UI and executor logs are important when investigating production shuffle problems.
+
+---
+
+## Key Learning
+
+A useful troubleshooting distinction is:
+
+```text
+Executor Lost
+      ≠
+FetchFailedException
+```
+
+An executor can disappear and the application may still succeed if Spark can recover the required work or shuffle data.
+
+A fetch failure becomes more serious when required shuffle data can no longer be retrieved successfully.
 
 ---
 
@@ -242,3 +283,19 @@ No `FetchFailedException` was observed.
 * `Executor_OOM_Java_Heap.md`
 * `OOM_Executor_Lost.md`
 * `Driver_OOM_Java_Heap.md`
+
+---
+
+## Experiment Status
+
+**Successfully reproduced**
+
+**Executor failure:** Simulated
+
+**Spark recovery:** Successful
+
+**Application failure:** No
+
+**FetchFailedException:** Not observed
+
+**Primary learning:** Executor loss does not necessarily result in shuffle fetch failure or application failure.

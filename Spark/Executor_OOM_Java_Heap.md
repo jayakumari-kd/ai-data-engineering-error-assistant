@@ -4,6 +4,7 @@
 
 ```text
 java.lang.OutOfMemoryError: Java heap space
+
     at org.apache.spark.unsafe.types.UTF8String.repeat(UTF8String.java:735)
     at org.apache.spark.sql.catalyst.expressions.BinaryExpression.eval(Expression.scala:672)
     at org.apache.spark.sql.catalyst.expressions.aggregate.Collect.update(collect.scala:53)
@@ -15,18 +16,20 @@ The failure occurred while executing a Spark aggregation using `collect_list()`.
 
 ## Environment
 
-* Spark version: 3.5.0
-* Mode: `local-cluster[2,1,1024]`
+* Spark Version: 3.5.0
+* Execution Mode: `local-cluster[2,1,1024]`
 * Executors: 2
 * Cores per executor: 1
-* Executor memory: 512 MB
-* Driver memory: 2 GB
-* Running inside Docker + JupyterLab + VS Code
-* Docker container remained healthy
+* Executor Memory: 512 MB
+* Driver Memory: 2 GB
+* Environment: Docker + JupyterLab + VS Code
+* Java: 17
 
 Spark configuration:
 
 ```python
+from pyspark.sql import SparkSession
+
 spark = SparkSession.builder \
     .appName("Executor-OOM-Test") \
     .master("local-cluster[2,1,1024]") \
@@ -39,7 +42,7 @@ spark = SparkSession.builder \
 
 ## Reproduction
 
-First, a large dataset was created:
+A large dataset was created:
 
 ```python
 from pyspark.sql import functions as F
@@ -47,7 +50,7 @@ from pyspark.sql import functions as F
 df = spark.range(0, 5_000_000, numPartitions=2)
 ```
 
-A memory-heavy aggregation was then created:
+A memory-intensive aggregation was then created:
 
 ```python
 heavy_df = df.groupBy(
@@ -59,15 +62,13 @@ heavy_df = df.groupBy(
 )
 ```
 
-Calling:
+The following operation succeeded:
 
 ```python
 heavy_df.count()
 ```
 
-succeeded.
-
-To force the aggregated values to be materialized and processed:
+The aggregated values were then materialized and processed:
 
 ```python
 result = heavy_df.rdd.map(
@@ -103,7 +104,7 @@ collect_list(...)
 
 This caused the executor to require more heap memory than the configured 512 MB.
 
-The important part of the stack trace was:
+The most relevant parts of the stack trace were:
 
 ```text
 UTF8String.repeat
@@ -115,7 +116,7 @@ followed by:
 aggregate.Collect.update
 ```
 
-This indicates that the large strings were being created and accumulated during the aggregation.
+This indicates that large strings were being created and accumulated during the aggregation.
 
 ---
 
@@ -123,7 +124,7 @@ This indicates that the large strings were being created and accumulated during 
 
 This was an important observation during troubleshooting.
 
-The following succeeded:
+The following operation succeeded:
 
 ```python
 heavy_df.count()
@@ -131,7 +132,7 @@ heavy_df.count()
 
 Even though the aggregation was memory intensive.
 
-An action such as `count()` does not necessarily require all of the large output values to be transferred to the driver or fully consumed in Python.
+An action such as `count()` does not require the complete aggregated values to be transferred to the Python process.
 
 The later operation:
 
@@ -141,11 +142,13 @@ heavy_df.rdd.map(
 ).collect()
 ```
 
-forced the aggregated collection to be materialized and processed, exposing the executor memory problem.
+forced the aggregated collection to be materialized and consumed, exposing the executor memory problem.
+
+This demonstrates that the success or failure of a Spark action depends not only on the input size, but also on how the result is materialized and consumed.
 
 ---
 
-## Difference From Driver OOM Experiment
+## Difference From Driver OOM
 
 ### Driver OOM
 
@@ -155,9 +158,9 @@ Previous experiment:
 Master: local[*]
 Driver memory: 1 GB
 Large rows
-        ↓
+      ↓
 collect()
-        ↓
+      ↓
 Driver JVM heap exhausted
 ```
 
@@ -182,11 +185,11 @@ Current experiment:
 ```text
 Master: local-cluster[2,1,1024]
 Executor memory: 512 MB
-        ↓
+      ↓
 Large strings
-        ↓
+      ↓
 collect_list()
-        ↓
+      ↓
 Executor aggregation memory exhausted
 ```
 
@@ -206,13 +209,13 @@ Classification:
 
 Large input size alone does not necessarily cause an Executor OOM.
 
-For example, processing millions of rows with:
+For example:
 
 ```python
 big_df.count()
 ```
 
-successfully completed.
+can successfully process millions of rows.
 
 The problem appeared when the workload required Spark to maintain a large amount of data in memory:
 
@@ -220,7 +223,7 @@ The problem appeared when the workload required Spark to maintain a large amount
 collect_list(...)
 ```
 
-Therefore, when investigating an OOM, check the **operation and execution plan**, not just the dataset size.
+Therefore, when investigating an OOM, check the **operation, data distribution, and execution plan**, not just the dataset size.
 
 ---
 
@@ -232,7 +235,7 @@ Executor OOM can occur because of:
 * Large joins
 * Data skew
 * Very large individual partitions
-* Excessive caching/persisting
+* Excessive caching or persisting
 * Large aggregations
 * Large objects created inside UDFs
 * Insufficient executor memory
@@ -246,50 +249,52 @@ Executor OOM can occur because of:
 
 When an Executor OOM occurs:
 
-1. Check whether the error is coming from the executor or driver.
-2. Look at the Spark executor logs.
-3. Check the failing stage and task.
+1. Determine whether the error originated on the executor or driver.
+2. Check the Spark executor logs.
+3. Identify the failing stage and task.
 4. Check for data skew.
 5. Check partition sizes.
 6. Look for large `collect_list()` / `collect_set()` operations.
 7. Review joins and broadcast operations.
-8. Check whether large objects are being created by UDFs.
+8. Check whether UDFs create large objects.
 9. Review executor memory configuration.
 10. Review executor memory overhead.
-11. Consider increasing partition count.
+11. Consider whether increasing partition count would reduce per-task memory pressure.
 12. Avoid unnecessarily keeping large datasets in executor memory.
 
 ---
 
 ## Potential Fixes
 
-### Avoid large `collect_list()`
+### Avoid Large `collect_list()`
 
-Instead of collecting millions of values into one group, consider whether the business requirement can be satisfied with:
+Instead of collecting millions of values into one group, determine whether the requirement can be satisfied using operations such as:
 
 * `count`
 * `sum`
 * `min`
 * `max`
 * `avg`
-* approximate aggregations
-* writing results to storage
+* Approximate aggregations
+* Writing results to storage
+
+The best solution is often to avoid creating an unnecessarily large in-memory collection.
 
 ---
 
-### Increase executor memory when appropriate
+### Increase Executor Memory When Appropriate
 
-Example:
+For example:
 
 ```text
 spark.executor.memory=4g
 ```
 
-However, increasing memory should not be the first solution if the underlying operation unnecessarily creates huge in-memory structures.
+However, increasing memory should not be the first solution if the underlying operation unnecessarily creates a huge in-memory structure.
 
 ---
 
-### Increase partitioning
+### Increase Partitioning
 
 For appropriate workloads:
 
@@ -299,11 +304,11 @@ df = df.repartition(20)
 
 More partitions can reduce the amount of data processed by an individual task.
 
-However, repartitioning does not automatically fix an aggregation where one key itself produces an enormous collection.
+However, repartitioning does not automatically solve an aggregation where a single key itself produces an enormous collection.
 
 ---
 
-### Investigate data skew
+### Investigate Data Skew
 
 If one group contains most of the records, a single task may receive disproportionately large amounts of data.
 
@@ -333,19 +338,20 @@ UTF8String.repeat
 aggregate.Collect.update
 ```
 
-**Status:** Successfully reproduced in the local Spark cluster.
+**Status:** Successfully reproduced in a local Spark cluster.
 
 ---
 
 ## Lessons Learned
 
-* `local[*]` is useful for reproducing Driver-side problems but does not represent a normal multi-executor cluster.
-* `local-cluster` can be used to reproduce executor-side behavior locally.
-* Large datasets do not automatically mean OOM.
+* `local[*]` is useful for reproducing driver-side behavior but does not represent a normal multi-executor cluster.
+* `local-cluster` can be useful for reproducing executor-side behavior locally.
+* Large datasets do not automatically cause OOM.
 * The operation being performed is critical.
 * `collect_list()` can create very large in-memory structures.
 * Increasing executor memory may mask the symptom without fixing the underlying problem.
 * Always distinguish Driver OOM from Executor OOM.
+* Data skew can create disproportionately large task-level memory requirements.
 * `Py4JNetworkError` can be a secondary symptom when the Spark JVM has already died; the underlying Java exception should be investigated first.
 
 ---

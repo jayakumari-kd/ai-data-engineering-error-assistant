@@ -12,11 +12,13 @@ Resolved
 
 While building a Docker image, Docker could not find the Dockerfile.
 
-The error was:
+Error:
 
 ```text
 open Dockerfile: no such file or directory
 ```
+
+---
 
 ## What Happened
 
@@ -38,7 +40,9 @@ Docker expects the default build file to be named exactly:
 Dockerfile
 ```
 
-with **no `.txt` extension**.
+with no `.txt` extension.
+
+---
 
 ## Root Cause
 
@@ -56,11 +60,13 @@ Expected filename:
 Dockerfile
 ```
 
-Windows can sometimes hide known file extensions, which makes this problem easy to miss.
+Windows can sometimes hide known file extensions, making this problem easy to miss.
+
+---
 
 ## Investigation
 
-### Check the files in the current directory
+### Check Files in the Current Directory
 
 PowerShell:
 
@@ -86,16 +92,18 @@ or:
 Dockerfile.txt
 ```
 
-### Check file extensions
+### Check File Extensions in Windows
 
-In Windows File Explorer:
+In File Explorer:
 
 1. Open the folder containing the Dockerfile.
 2. Select **View**.
 3. Select **Show**.
 4. Enable **File name extensions**.
 
-This makes `.txt`, `.py`, `.md`, etc. visible.
+This makes extensions such as `.txt`, `.py`, and `.md` visible.
+
+---
 
 ## Resolution
 
@@ -111,31 +119,25 @@ to:
 Dockerfile
 ```
 
-Then run the Docker build again.
-
-Example:
+Then run the Docker build again:
 
 ```powershell
 docker build -t my-data-engineering .
 ```
 
-The `.` means Docker should use the current directory as the build context.
+The `.` tells Docker to use the current directory as the build context.
+
+---
 
 ## Verification
 
-Check that the file exists:
+Check that the Dockerfile exists:
 
 ```powershell
 Get-ChildItem Dockerfile
 ```
 
-The output should show:
-
-```text
-Dockerfile
-```
-
-You can also check:
+You can also use:
 
 ```powershell
 Test-Path .\Dockerfile
@@ -147,13 +149,17 @@ Expected result:
 True
 ```
 
+---
+
 ## Lessons Learned
 
 * Docker's default build file is named `Dockerfile`.
 * `Dockerfile.txt` is a different filename.
-* Windows may hide file extensions.
-* Always enable **File name extensions** when troubleshooting filename-related Docker errors.
+* Windows may hide known file extensions.
+* Enable **File name extensions** when troubleshooting filename-related problems.
 * Use `Get-ChildItem` or `dir` to verify the actual filename.
+
+---
 
 ## Useful Commands
 
@@ -168,6 +174,8 @@ Test-Path .\Dockerfile
 ```powershell
 docker build -t my-data-engineering .
 ```
+
+---
 
 ## Related Errors
 

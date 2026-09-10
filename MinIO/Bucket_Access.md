@@ -1,12 +1,20 @@
 # MinIO Bucket Access
 
-## Error Category
+## Category
 
 MinIO / Bucket / Permissions
 
-## Error Message
+## Status
 
-Typical errors:
+Troubleshooting Reference
+
+---
+
+## Problem
+
+A MinIO alias may be configured successfully while access to a specific bucket or its objects fails.
+
+Typical errors include:
 
 ```text
 Access Denied
@@ -17,22 +25,7 @@ InvalidAccessKeyId
 SignatureDoesNotMatch
 ```
 
-## Environment
-
-* MinIO Version:
-* mc Version:
-* Environment:
-* MinIO Endpoint:
-* Alias Name:
-* Bucket Name:
-* Access Key:
-* Authentication Method:
-
-## What Happened
-
-The MinIO alias was configured successfully, but access to a specific bucket or its objects failed.
-
-The issue may occur while:
+The problem may occur while:
 
 * Listing buckets
 * Listing objects
@@ -42,61 +35,140 @@ The issue may occur while:
 * Copying data between buckets
 * Backing up MinIO data to S3
 
+---
+
+## Environment
+
+* MinIO Version: `<MINIO_VERSION>`
+* `mc` Version: `<MC_VERSION>`
+* Environment: `<ENVIRONMENT>`
+* MinIO Endpoint: `<MINIO_ENDPOINT>`
+* Alias Name: `<ALIAS_NAME>`
+* Bucket Name: `<BUCKET_NAME>`
+* Authentication Method: Access Key / Secret Key / Service Account
+
+Do not store real access keys, secret keys, internal endpoints, or production bucket names in this document.
+
+---
+
+## What Happened
+
+The MinIO alias was configured successfully, but an operation against a specific bucket or object failed.
+
+A successful alias configuration only confirms that the client can store the alias configuration and, depending on the command/result, may confirm connectivity. It does not guarantee that the authenticated identity has permission to perform every bucket or object operation.
+
+---
+
 ## Root Cause
 
-Common causes:
+Common causes include:
 
 1. Incorrect bucket name
 2. Bucket does not exist
 3. Insufficient permissions
-4. Incorrect access key or secret key
-5. Policy does not allow the required operation
-6. Wrong MinIO endpoint
+4. Incorrect credentials
+5. MinIO policy does not allow the required operation
+6. Incorrect MinIO endpoint
 7. Bucket belongs to a different environment
-8. Object path is incorrect
-9. Credentials were changed or expired
+8. Incorrect object path
+9. Credentials were changed, expired, or revoked
+10. Signature or authentication configuration mismatch
+
+---
 
 ## Investigation
 
-### Step 1 – Verify Alias
+### Step 1 – Verify the Alias
+
+Run:
 
 ```bash
 mc alias list
 ```
 
-Confirm that the correct MinIO endpoint is configured.
+Confirm:
 
-### Step 2 – List Buckets
+* Alias name
+* MinIO endpoint
+* Protocol (`http` / `https`)
+* Expected environment
+
+Do not expose credentials in screenshots or documentation.
+
+---
+
+### Step 2 – List Available Buckets
+
+Run:
 
 ```bash
 mc ls myminio
 ```
 
-Check whether the required bucket exists.
+Check whether the required bucket is visible.
 
-### Step 3 – Check Bucket Access
+If the bucket does not appear, investigate:
+
+* Bucket name
+* User permissions
+* Environment
+* Credentials
+* Endpoint
+
+---
+
+### Step 3 – Test Bucket Access
+
+Run:
 
 ```bash
-mc ls myminio/<bucket-name>
+mc ls myminio/<BUCKET_NAME>
 ```
 
-If this returns `Access Denied`, investigate permissions.
+If this returns:
 
-### Step 4 – Check Object Path
+```text
+Access Denied
+```
+
+investigate the permissions associated with the authenticated identity.
+
+If it returns:
+
+```text
+NoSuchBucket
+```
+
+verify the bucket name and MinIO environment.
+
+---
+
+### Step 4 – Verify the Object Path
+
+For a specific path:
 
 ```bash
-mc ls myminio/<bucket-name>/<path>
+mc ls myminio/<BUCKET_NAME>/<PATH>
 ```
 
-Verify that the bucket and object path are correct.
+Verify:
+
+* Bucket name
+* Prefix/path
+* Object name
+* Environment
+
+Object paths are case-sensitive.
+
+---
 
 ### Step 5 – Check Permissions
 
-Review the policy associated with the MinIO user/service account.
+Review the policy associated with the MinIO user or service account.
 
-Required permissions depend on the operation.
+The required permissions depend on the operation.
 
-For example:
+Examples include:
 
 ```text
 ListBucket
@@ -105,94 +177,143 @@ PutObject
 DeleteObject
 ```
 
-Do not grant more permissions than required.
+Only grant the permissions required by the application or workflow.
 
-## Fix Tried
+---
 
-### Attempt 1
+### Step 6 – Verify Credentials
 
-Verified bucket name.
-
-**Result:** Corrected an incorrect bucket/path.
-
-### Attempt 2
-
-Verified MinIO alias.
-
-```bash
-mc alias list
-```
-
-**Result:** Confirmed the correct endpoint.
-
-### Attempt 3
-
-Checked user permissions.
-
-**Result:** Missing bucket permission identified.
-
-### Attempt 4
-
-Updated the required policy.
-
-**Result:** Bucket access restored.
-
-## Final Fix
-
-Example:
+Authentication errors such as:
 
 ```text
-The MinIO user had access to the MinIO server but did not have
-permission to access the required bucket.
-
-The required bucket permissions were added and access was validated
-using mc ls and object read/write tests.
+InvalidAccessKeyId
+SignatureDoesNotMatch
 ```
+
+can indicate incorrect, expired, revoked, or mismatched credentials.
+
+Verify that the credentials belong to the expected MinIO environment.
+
+Never place actual credentials in the Markdown file.
+
+---
+
+## Resolution
+
+The appropriate resolution depends on the failure identified during investigation.
+
+### Incorrect Bucket Name
+
+Correct the bucket name:
+
+```bash
+mc ls myminio/<CORRECT_BUCKET_NAME>
+```
+
+### Missing Bucket
+
+Confirm that the bucket exists in the expected environment before attempting to create or access it.
+
+### Insufficient Permissions
+
+Update the relevant MinIO policy to provide only the permissions required for the operation.
+
+For example, a workflow that only reads objects should not automatically receive delete permissions.
+
+### Incorrect Object Path
+
+Correct the bucket or object prefix:
+
+```bash
+mc ls myminio/<BUCKET_NAME>/<CORRECT_PATH>
+```
+
+### Authentication Problem
+
+Verify the access key, secret key, service account, and target MinIO endpoint.
+
+---
 
 ## Validation
 
-After fixing the issue, validate:
+After resolving the issue, validate bucket access:
 
 ```bash
-mc ls myminio/<bucket-name>
+mc ls myminio/<BUCKET_NAME>
 ```
 
-Then test an object operation appropriate to the environment:
+Then perform an operation appropriate to the workflow.
+
+### Upload Test
 
 ```bash
-mc cp <source> myminio/<bucket-name>/
+mc cp <SOURCE_FILE> myminio/<BUCKET_NAME>/
 ```
 
-or:
+### Download Test
 
 ```bash
-mc cp myminio/<bucket-name>/<object> <destination>
+mc cp myminio/<BUCKET_NAME>/<OBJECT> <DESTINATION>
 ```
+
+Only perform write or delete tests in an appropriate non-production environment unless the operation is explicitly authorized.
+
+---
+
+## Troubleshooting Matrix
+
+| Error                   | Likely Area                             |
+| ----------------------- | --------------------------------------- |
+| `Access Denied`         | Permissions / Policy                    |
+| `NoSuchBucket`          | Bucket name / Environment               |
+| `InvalidAccessKeyId`    | Credentials                             |
+| `SignatureDoesNotMatch` | Credentials / Endpoint / Authentication |
+| `Unable to connect`     | Network / Endpoint                      |
+| Object not found        | Bucket / Object path                    |
+
+---
 
 ## Important Security Note
 
 Never store real credentials in this error file.
 
-Use placeholders:
+Use placeholders such as:
 
 ```text
 <ACCESS_KEY>
 <SECRET_KEY>
 <MINIO_ENDPOINT>
 <BUCKET_NAME>
+<OBJECT_PATH>
 ```
+
+Never commit:
+
+* Access keys
+* Secret keys
+* Tokens
+* Passwords
+* Internal hostnames
+* Production URLs
+* Customer-specific bucket names
+
+---
 
 ## Lessons Learned
 
 * Successful alias configuration does not guarantee bucket-level access.
-* Always verify the bucket name and environment.
-* Check permissions when `mc ls` returns `Access Denied`.
-* Validate both bucket listing and actual object operations.
-* Keep production credentials and internal endpoints out of the knowledge base.
+* Always verify the bucket name and target environment.
+* `Access Denied` should trigger a permission/policy investigation.
+* `NoSuchBucket` should trigger a bucket name and environment check.
+* Validate both bucket listing and the actual object operation required by the workflow.
+* Keep production credentials and internal infrastructure details out of the public knowledge base.
+
+---
 
 ## Related Errors
 
-* Alias_Config.md
-* JDBC_Error.md
-* Connection_Reset.md
-* S3 Access/Permission Issues
+* `Alias_Config.md`
+* MinIO Connectivity Issues
+* S3 Access / Permission Issues
+* Kubernetes Connectivity Issues
+* Network / DNS Issues

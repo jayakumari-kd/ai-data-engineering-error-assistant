@@ -6,18 +6,17 @@
 java.net.SocketException: Connection reset
 ```
 
-The Spark JDBC connection was established, but the connection was unexpectedly terminated while the JDBC driver was communicating with the endpoint.
+The Spark JDBC connection reached the test endpoint, but the connection was unexpectedly terminated while the JDBC driver was communicating with it.
 
 ---
 
 ## Environment
 
 * Spark: 3.5.0
-* Java: OpenJDK 17.0.8.1
+* Java: OpenJDK 17
 * PySpark running in Jupyter
 * Docker Desktop
-* Spark container: `funny_gould`
-* Spark home: `/usr/local/spark`
+* Spark running inside Docker
 * SQL Server JDBC Driver: `mssql-jdbc-13.4.0.jre11.jar`
 
 No real SQL Server or production credentials were used.
@@ -45,11 +44,11 @@ Result:
 Rows: 10000
 ```
 
-A fake TCP endpoint was started on port `9997`.
+A controlled fake TCP endpoint was started on port `9997`.
 
-The endpoint accepted the JDBC connection and deliberately terminated the connection.
+The endpoint accepted the connection and deliberately terminated it.
 
-JDBC write:
+The JDBC write was then executed:
 
 ```python
 jdbc_url = "jdbc:sqlserver://localhost:9997;databaseName=TestDB"
@@ -66,6 +65,8 @@ test_df.write \
     .save()
 ```
 
+The username and password above were dummy test values.
+
 ---
 
 ## Actual Error
@@ -75,8 +76,8 @@ The important part of the stack trace was:
 ```text
 Caused by: java.net.SocketException: Connection reset
 
-at java.base/sun.nio.ch.NioSocketImpl.implRead(NioSocketImpl.java:328)
-at java.base/java.net.Socket$SocketInputStream.read(Socket.java:966)
+at java.base/sun.nio.ch.NioSocketImpl.implRead(...)
+at java.base/java.net.Socket$SocketInputStream.read(...)
 at com.microsoft.sqlserver.jdbc.TDSChannel$ProxyInputStream.readInternal(...)
 at com.microsoft.sqlserver.jdbc.TDSChannel.read(...)
 ```
@@ -85,7 +86,7 @@ at com.microsoft.sqlserver.jdbc.TDSChannel.read(...)
 
 ## What Happened
 
-The JDBC driver successfully reached the test endpoint.
+The JDBC driver successfully reached the controlled test endpoint.
 
 The connection was then unexpectedly terminated.
 
@@ -111,7 +112,7 @@ Connection reset
 
 For this controlled experiment, the connection was deliberately terminated by the fake TCP server.
 
-Therefore, the test successfully reproduced the **network-level `Connection reset` condition**.
+Therefore, the experiment successfully reproduced a **network-level `Connection reset` condition**.
 
 The experiment did not involve a real SQL Server.
 
@@ -130,16 +131,16 @@ In a real Spark → SQL Server pipeline, possible causes include:
 * Database resource pressure
 * Too many concurrent JDBC connections
 * Very large or long-running JDBC operations
-* Executor/container network problems
-* Connection being terminated while reading or writing data
+* Executor or container network problems
+* Connection termination while reading or writing data
 
-The exact root cause must be determined from the surrounding logs and infrastructure.
+The exact cause must be determined from the surrounding logs and infrastructure.
 
 ---
 
 ## Investigation
 
-### 1. Identify where the reset occurred
+### 1. Identify Where the Reset Occurred
 
 Check the complete Spark/JDBC stack trace.
 
@@ -159,9 +160,9 @@ Determine whether the failure occurred during:
 
 ---
 
-### 2. Check SQL Server logs
+### 2. Check SQL Server Logs
 
-If this happens in production, check SQL Server logs around the exact failure timestamp.
+If the problem occurs in production, check SQL Server logs around the exact failure timestamp.
 
 Look for:
 
@@ -173,9 +174,9 @@ Look for:
 
 ---
 
-### 3. Check Spark executor logs
+### 3. Check Spark Executor Logs
 
-Because JDBC writes are normally performed by Spark executors, check the executor that reported the failure.
+JDBC writes are commonly executed by Spark executors, so check the executor that reported the failure.
 
 Look for:
 
@@ -189,7 +190,7 @@ Executor lost
 
 ---
 
-### 4. Check network infrastructure
+### 4. Check Network Infrastructure
 
 Investigate:
 
@@ -200,11 +201,11 @@ Investigate:
 * Kubernetes networking
 * VPN/private network connectivity
 
-A connection reset does not automatically mean SQL Server itself caused the problem.
+A connection reset does not automatically mean that SQL Server itself caused the problem.
 
 ---
 
-### 5. Check JDBC concurrency
+### 5. Check JDBC Concurrency
 
 Spark can create multiple JDBC connections when multiple partitions write simultaneously.
 
@@ -216,7 +217,7 @@ test_df.repartition(10)
 
 can result in multiple concurrent JDBC tasks.
 
-Too much parallelism can put unnecessary connection pressure on SQL Server.
+Excessive parallelism can put unnecessary connection pressure on SQL Server.
 
 ---
 
@@ -228,13 +229,13 @@ Too much parallelism can put unnecessary connection pressure on SQL Server.
 Connection refused
 ```
 
-Usually means the connection could not be established because nothing was accepting the connection on the target port.
+Usually means the connection could not be established because the target endpoint was not accepting connections.
 
 ```text
 Spark
- ↓
+  ↓
 JDBC
- ↓
+  ↓
 ❌ Connection refused
 ```
 
@@ -244,17 +245,19 @@ JDBC
 Connection reset
 ```
 
-Means communication was interrupted after the connection had been established.
+Means an established connection was unexpectedly terminated.
 
 ```text
 Spark
- ↓
+  ↓
 JDBC
- ↓
+  ↓
 ✅ Connection established
- ↓
+  ↓
 ❌ Connection unexpectedly terminated
 ```
+
+This distinction is useful when troubleshooting JDBC connectivity problems.
 
 ---
 
@@ -272,19 +275,19 @@ When this occurs in production:
 [ ] Check load balancer/proxy
 [ ] Check JDBC connection count
 [ ] Check Spark partition count
-[ ] Check batch size
+[ ] Check JDBC batch size
 [ ] Check whether large data is being written
 [ ] Check whether failures are intermittent or consistent
-[ ] Retry only after understanding the underlying cause
+[ ] Investigate before increasing retries
 ```
 
 ---
 
-## Fix
+## Potential Fixes
 
 There is no universal fix for `Connection reset`.
 
-The fix depends on where the connection was terminated.
+The appropriate action depends on where and why the connection was terminated.
 
 Potential actions include:
 
@@ -295,10 +298,10 @@ Potential actions include:
 * Tune JDBC batch size
 * Investigate long-running operations
 * Resolve executor/network instability
-* Adjust appropriate connection/network timeout settings
+* Adjust appropriate connection or network timeout settings
 * Retry transient failures where appropriate
 
-Avoid blindly increasing timeouts or retries without identifying the cause.
+Avoid blindly increasing timeouts or retries without identifying the underlying cause.
 
 ---
 
@@ -308,7 +311,7 @@ Avoid blindly increasing timeouts or retries without identifying the cause.
 
 The SQL Server JDBC driver was present and loaded successfully.
 
-The connection was established with the test endpoint and then deliberately terminated, producing:
+The connection was established with the controlled test endpoint and then deliberately terminated, producing:
 
 ```text
 java.net.SocketException: Connection reset
@@ -324,8 +327,8 @@ java.net.SocketException: Connection reset
 4. The reset can originate from SQL Server, the network, firewall, proxy, load balancer, or infrastructure.
 5. Spark JDBC writes can create multiple concurrent database connections through partitions.
 6. Executor logs are important because JDBC operations are commonly executed by Spark executors.
-7. Increasing timeout/retry settings is not always the correct solution.
-8. Always investigate the infrastructure and database logs around the failure timestamp.
+7. Increasing timeout or retry settings is not always the correct solution.
+8. Infrastructure and database logs should be investigated around the failure timestamp.
 9. A controlled fake TCP endpoint can reproduce the network-level error without requiring a real SQL Server.
 
 ---
@@ -337,3 +340,17 @@ java.net.SocketException: Connection reset
 * `Spark_Write_Failure_SQLServer.md`
 * `Spark/Executor_OOM_Java_Heap.md`
 * `Spark/OOM_Executor_Lost.md`
+
+---
+
+## Experiment Status
+
+**Successfully reproduced**
+
+**Failure:** `java.net.SocketException: Connection reset`
+
+**Test type:** Controlled network simulation
+
+**Real SQL Server used:** No
+
+**Primary learning:** A connection reset indicates that an established connection was unexpectedly terminated; the underlying cause must be investigated across the database, network, and Spark execution layers.
