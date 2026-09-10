@@ -1,6 +1,6 @@
 FROM jupyter/pyspark-notebook:latest
 
-ARG AUTHOR="Danny Meijer <chilltake@gmail.com>"
+ARG AUTHOR="Jaya Kumari<kumarijayamishra12@gmail.com>"
 ARG COURSE_NAME="Mastering Big Data Analytics with Pyspark"
 ARG CONTAINER_NAME="mastering-pyspark-ml"
 ARG VERSION="20240727"
